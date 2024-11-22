@@ -12,6 +12,9 @@ from Bio.Seq import Seq
 import Levenshtein as Lev
 import warnings
 
+import statsmodels.discrete.discrete_model as dm
+
+
 def separate_vrc01(df):
     '''Input the LIBRA-seq output dataframe. Returns a non-VRC01 and VRC01 dataframe (in that order).'''
     vrc01_cdr3 = 'ACTAGGGGAAAAAACTGTGATTACAATTGGGACTTCGAACAC'
@@ -164,7 +167,7 @@ def custom_mle_mix(n, w_guess, initials):
 def calculate_component_probabilities(x_signal, umi, popt):
 
     probdf = pd.DataFrame(x_signal).copy()
-    n_signal, p_signal, n_noise, p_noise, weight = convert_params(popt)
+    n_signal, p_signal, n_noise, p_noise, weight = convert_params_mle_to_scipy(popt)
 
     probdf['pmf'] = (st.nbinom.pmf(probdf[umi], n_signal, p_signal))
     probdf['pmf_noise'] = (st.nbinom.pmf(probdf[umi], n_noise, p_noise))
@@ -184,3 +187,33 @@ def calculate_component_probabilities(x_signal, umi, popt):
         probdf['probsB'] = Pa
         probdf['probsA'] = Pb
     return probdf
+
+
+def fit_mixture_model(sample_df, umi,noise_df = None ):
+    init_weight = 0.9
+    
+    x_signal = sample_df[umi]
+
+    if noise_df is not None:
+        x_noise = noise_df[umi]
+        X_noise = np.ones_like(x_noise)
+
+        # Fitting distribution to noise in VRC01 cells
+        model_noise_nb = dm.NegativeBinomial(x_noise,X_noise).fit(start_params=[1,1])
+        mu_noise, n_noise, p_noise, beta_noise = convert_params_statsmodels(model_noise_nb)
+
+        nBinom_mixture = custom_mle_mix(x_signal, w_guess = init_weight, initials = (n_noise, beta_noise, 1, 1))
+
+    
+    else:
+        # Getting initial guess for non-VRC01 approach
+        initial_guess_params = initial_guess_mix(x_signal, init_weight)
+        if initial_guess_params[0] > initial_guess_params[2]:
+            n_noise, beta_noise = initial_guess_params[0], initial_guess_params[2]
+        else:
+            n_noise, beta_noise = initial_guess_params[1], initial_guess_params[3]
+
+        nBinom_mixture = custom_mle_mix(x_signal, w_guess = init_weight, initials = (n_noise, beta_noise, 1, 1))
+
+
+    return nBinom_mixture
